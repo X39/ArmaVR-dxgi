@@ -4,7 +4,7 @@
 #include <iomanip>
 
 #ifdef _DEBUG
-#define F_PRINT std::cout << __FUNCTION__ "\n" << std::endl
+#define F_PRINT std::cout << "CALLED " __FUNCTION__ << std::endl
 #else
 #define F_PRINT
 #endif

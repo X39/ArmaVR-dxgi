@@ -20,16 +20,16 @@ namespace hooks
 {
     struct CreateSwapChain : public hooker::hook
     {
-        void* factory;
+        IDXGIFactory* factory;
         static armavr::dxgi::addresses::IDXGIFactory::CreateSwapChain original;
 
-        CreateSwapChain(void* f) : hooker::hook("CreateSwapChain"), factory(f)
+        CreateSwapChain(IDXGIFactory* f) : hooker::hook("CreateSwapChain"), factory(f)
         {
             if (armavr::dxgi::addresses::IDXGIFactory::get_CreateSwapChain(factory) != original)
             {
                 std::cout << "Aquiring hook of IDXGIFactory::CreateSwapChain" << std::endl;
                 original = armavr::dxgi::addresses::IDXGIFactory::get_CreateSwapChain(factory);
-                armavr::dxgi::addresses::IDXGIFactory::set_CreateSwapChain(factory, hooked);
+                armavr::dxgi::addresses::IDXGIFactory::set_CreateSwapChain(factory, callback);
             }
         }
         virtual ~CreateSwapChain()
@@ -41,7 +41,7 @@ namespace hooks
             }
         }
 
-        static HRESULT _stdcall hooked(
+        static HRESULT _stdcall callback(
             IDXGIFactory* This,
             IUnknown* pDevice,
             DXGI_SWAP_CHAIN_DESC* pDesc,

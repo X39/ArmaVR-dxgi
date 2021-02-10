@@ -1,10 +1,14 @@
 #pragma once
 
 #include <dxgi.h>
+struct ID3D11Device;
+struct ID3D11DeviceContext;
 
 class DXGISwapChainLayer : public IDXGISwapChain
 {
-    IDXGISwapChain* mSwapchain;
+    IDXGISwapChain* m_swapchain;
+    ID3D11Device* m_device;
+    ID3D11DeviceContext* m_device_context;
 
 public:
 
