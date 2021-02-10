@@ -1,9 +1,11 @@
 #include "dxgi.hpp"
-#include "dxgi_abi.hpp"
+#include "abi.hpp"
 #include "factory.hpp"
 #include "swapchain.hpp"
 #include "../hooker.hpp"
 #include "../dllmain.hpp"
+#include "../util.hpp"
+#include "../dlops.hpp"
 
 
 #include <dxgi.h>
@@ -13,52 +15,6 @@
 #include <iostream>
 #include <iomanip>
 
-#ifdef _DEBUG
-#define F_PRINT std::cout << __FUNCTION__ "\n" << std::endl
-#else
-#define F_PRINT
-#endif
-
-std::ostream& operator<< (std::ostream& stream, const IID iid)
-{
-    auto casted = reinterpret_cast<const char*>(&iid);
-    for (
-        size_t i = 0;
-        i < sizeof(iid.Data1);
-        i++)
-    {
-        char c = casted[i];
-        stream << std::hex << std::setfill('0') << std::setw(2) << +c;
-    }
-    stream << "-";
-    for (
-        size_t i = sizeof(iid.Data1);
-        i < sizeof(iid.Data1) + sizeof(iid.Data2);
-        i++)
-    {
-        char c = casted[i];
-        stream << std::hex << std::setfill('0') << std::setw(2) << +c;
-    }
-    stream << "-";
-    for (
-        size_t i = sizeof(iid.Data1) + sizeof(iid.Data2);
-        i < sizeof(iid.Data1) + sizeof(iid.Data2) + sizeof(iid.Data3);
-        i++)
-    {
-        char c = casted[i];
-        stream << std::hex << std::setfill('0') << std::setw(2) << +c;
-    }
-    stream << "-";
-    for (
-        size_t i = sizeof(iid.Data1) + sizeof(iid.Data2) + sizeof(iid.Data3);
-        i < sizeof(iid.Data1) + sizeof(iid.Data2) + sizeof(iid.Data3) + sizeof(iid.Data4);
-        i++)
-    {
-        char c = casted[i];
-        stream << std::hex << std::setfill('0') << std::setw(2) << +c;
-    }
-    return stream;
-}
 
 namespace hooks
 {
@@ -111,8 +67,6 @@ namespace hooks
 
 struct IUnknown;
 
-HMODULE libHandledxgi = NULL;
-
 typedef HRESULT(WINAPI* CreateDXGIFactory2_t) (UINT, REFIID, void**);
 
 HRESULT WINAPI CreateDXGIFactoryHooked(REFIID riid, void** ppFactory)
@@ -137,24 +91,13 @@ HRESULT WINAPI CreateDXGIFactory2Hooked(UINT Flags, REFIID riid, void** ppFactor
 
 HRESULT WINAPI CreateDXGIFactoryActual(UINT Flags, REFIID riid, void** ppFactory)
 {
-    if (libHandledxgi == NULL)
-    {
-        libHandledxgi = LoadLibraryA("C:/Windows/System32/dxgi.dll");
-        LoadLibraryA("Indicium-ImGui.dll");
-    }
-
-    if (libHandledxgi == NULL)
-    {
-        std::cout << "Failed to load dxgi.dll" << std::endl;
-        return ERROR_INVALID_LIBRARY;
-    }
-
-    CreateDXGIFactory2_t cProc = (CreateDXGIFactory2_t)GetProcAddress(libHandledxgi, "CreateDXGIFactory2");
+    auto& dl = dlops::get("C:/Windows/System32/dxgi.dll");
+    auto cProc = dl.resolve<HRESULT WINAPI (UINT, REFIID, void**)>("CreateDXGIFactory2");
 
     std::cout << "CreateDXGIFactory with { " <<
         "Flags: " << "0x" << std::hex << Flags << ", " <<
-        "Addr: " << "0x" << std::hex << ppFactory << "," <<
-        "IID: " << riid << "," <<
+        "Addr: " << "0x" << std::hex << ppFactory << ", " <<
+        "IID: " << riid << 
         " }" << std::endl;
 
     HRESULT result = ERROR;

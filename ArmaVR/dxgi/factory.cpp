@@ -1,13 +1,8 @@
 #include "factory.hpp"
 #include "dxgi.hpp"
+#include "../util.hpp"
 
 #include <iostream>
-
-#ifdef _DEBUG
-#define F_PRINT std::cout << __FUNCTION__ "\n" << std::endl
-#else
-#define F_PRINT
-#endif
 
 
 armavr::dxgi::factory::factory(UINT Flags, REFIID riid)

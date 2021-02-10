@@ -1,14 +1,8 @@
 #include "swapchain.hpp"
+#include "../util.hpp"
 
 #include <d3d11.h>
 #include <iostream>
-
-
-#ifdef _DEBUG
-#define F_PRINT std::cout << __FUNCTION__ "\n" << std::endl
-#else
-#define F_PRINT
-#endif
 
 DXGISwapChainLayer::DXGISwapChainLayer(IDXGISwapChain* swp) : mSwapchain(swp)
 {

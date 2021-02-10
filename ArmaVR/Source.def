@@ -4,3 +4,5 @@ EXPORTS
 	CreateDXGIFactory = CreateDXGIFactoryHooked
 	CreateDXGIFactory1 = CreateDXGIFactory1Hooked
 	CreateDXGIFactory2 = CreateDXGIFactory2Hooked
+	D3D11CreateDevice = D3D11CreateDeviceHooked
+	D3D11CreateDeviceAndSwapChain = D3D11CreateDeviceAndSwapChainHooked
