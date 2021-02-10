@@ -1,0 +1,6 @@
+LIBRARY
+
+EXPORTS
+	CreateDXGIFactory = CreateDXGIFactoryHooked
+	CreateDXGIFactory1 = CreateDXGIFactory1Hooked
+	CreateDXGIFactory2 = CreateDXGIFactory2Hooked
