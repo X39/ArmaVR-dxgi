@@ -1,8 +1,5 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN // Exclude rarely-used stuff from Windows headers
-#include <Windows.h>
-
 struct IDXGIFactory;
 struct IUnknown;
 struct DXGI_SWAP_CHAIN_DESC;
@@ -10,6 +7,11 @@ struct IDXGISwapChain;
 struct ID3D11RenderTargetView;
 struct ID3D11DepthStencilView;
 struct ID3D11DeviceContext1;
+struct ID3D11View;
+
+#define WIN32_LEAN_AND_MEAN // Exclude rarely-used stuff from Windows headers
+#include <Windows.h>
+
 namespace armavr::dxgi::addresses
 {
     namespace IDXGIFactory
@@ -46,5 +48,18 @@ namespace armavr::dxgi::addresses
             _In_  UINT8 Stencil);
         [[nodiscard]] armavr::dxgi::addresses::ID3D11DeviceContext1::ClearDepthStencilView get_ClearDepthStencilView(::ID3D11DeviceContext1* pDeviceContext);
         void set_ClearDepthStencilView(::ID3D11DeviceContext1* pDeviceContext, ClearDepthStencilView addr);
+
+
+        typedef void (STDMETHODCALLTYPE* ClearView)(
+            ::ID3D11DeviceContext1* This,
+            /* [annotation] */
+            _In_  ID3D11View* pView,
+            /* [annotation] */
+            _In_  const FLOAT Color[4],
+            /* [annotation] */
+            const RECT* pRect,
+            UINT NumRects);
+        [[nodiscard]] armavr::dxgi::addresses::ID3D11DeviceContext1::ClearView get_ClearView(::ID3D11DeviceContext1* pDeviceContext);
+        void set_ClearView(::ID3D11DeviceContext1* pDeviceContext, ClearView addr);
     }
 }

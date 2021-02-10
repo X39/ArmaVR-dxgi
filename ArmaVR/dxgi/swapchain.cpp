@@ -107,6 +107,56 @@ namespace hooks
         }
     };
     armavr::dxgi::addresses::ID3D11DeviceContext1::ClearDepthStencilView ClearDepthStencilView::original = 0;
+
+    struct ClearView : public hooker::hook
+    {
+        ID3D11DeviceContext1* deviceContext;
+        static armavr::dxgi::addresses::ID3D11DeviceContext1::ClearView original;
+
+        ClearView(ID3D11DeviceContext1* dc) : hooker::hook("ClearView"), deviceContext(dc)
+        {
+            if (armavr::dxgi::addresses::ID3D11DeviceContext1::get_ClearView(deviceContext) != original)
+            {
+                std::cout << "Aquiring hook of ID3D11DeviceContext1::ClearView" << std::endl;
+                original = armavr::dxgi::addresses::ID3D11DeviceContext1::get_ClearView(deviceContext);
+                armavr::dxgi::addresses::ID3D11DeviceContext1::set_ClearView(deviceContext, callback);
+            }
+        }
+        ClearView(ID3D11DeviceContext* dc) : hooker::hook("ClearView"), deviceContext(nullptr)
+        {
+            dc->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)(&deviceContext));
+            if (armavr::dxgi::addresses::ID3D11DeviceContext1::get_ClearView(deviceContext) != original)
+            {
+                std::cout << "Aquiring hook of ID3D11DeviceContext1::ClearView" << std::endl;
+                original = armavr::dxgi::addresses::ID3D11DeviceContext1::get_ClearView(deviceContext);
+                armavr::dxgi::addresses::ID3D11DeviceContext1::set_ClearView(deviceContext, callback);
+            }
+        }
+        virtual ~ClearView()
+        {
+            if (armavr::dxgi::addresses::ID3D11DeviceContext1::get_ClearView(deviceContext) != original)
+            {
+                std::cout << "Releasing hook of ID3D11DeviceContext1::ClearView" << std::endl;
+                armavr::dxgi::addresses::ID3D11DeviceContext1::set_ClearView(deviceContext, original);
+            }
+            deviceContext->Release();
+        }
+        static void STDMETHODCALLTYPE callback(
+            ::ID3D11DeviceContext1* This,
+            /* [annotation] */
+            _In_  ID3D11View* pView,
+            /* [annotation] */
+            _In_  const FLOAT* Color,
+            /* [annotation] */
+            const RECT* pRect,
+            UINT NumRects)
+        {
+            F_PRINT;
+
+            original(This, pView, Color, pRect, NumRects);
+        }
+    };
+    armavr::dxgi::addresses::ID3D11DeviceContext1::ClearView ClearView::original = 0;
 }
 
 
@@ -122,6 +172,7 @@ DXGISwapChainLayer::DXGISwapChainLayer(IDXGISwapChain* swp) : m_swapchain(swp)
 
     hooker::register_hook<hooks::ClearRenderTargetView>(m_device_context);
     hooker::register_hook<hooks::ClearDepthStencilView>(m_device_context);
+    hooker::register_hook<hooks::ClearView>(m_device_context);
 }
 
 HRESULT __stdcall DXGISwapChainLayer::QueryInterface(REFIID riid, void** ppvObject)

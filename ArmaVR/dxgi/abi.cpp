@@ -46,3 +46,16 @@ void armavr::dxgi::addresses::ID3D11DeviceContext1::set_ClearDepthStencilView(::
     deviceContext->lpVtbl->ClearDepthStencilView = addr;
     VirtualProtect(&deviceContext->lpVtbl->ClearRenderTargetView, sizeof(void*), original_protect, &original_protect);
 }
+
+armavr::dxgi::addresses::ID3D11DeviceContext1::ClearView armavr::dxgi::addresses::ID3D11DeviceContext1::get_ClearView(::ID3D11DeviceContext1* deviceContext)
+{
+    return reinterpret_cast<ClearView>(deviceContext->lpVtbl->ClearView);
+}
+
+void armavr::dxgi::addresses::ID3D11DeviceContext1::set_ClearView(::ID3D11DeviceContext1* deviceContext, ClearView addr)
+{
+    DWORD original_protect;
+    VirtualProtect(&deviceContext->lpVtbl->ClearView, sizeof(void*), PAGE_EXECUTE_READWRITE, &original_protect);
+    deviceContext->lpVtbl->ClearView = addr;
+    VirtualProtect(&deviceContext->lpVtbl->ClearView, sizeof(void*), original_protect, &original_protect);
+}
