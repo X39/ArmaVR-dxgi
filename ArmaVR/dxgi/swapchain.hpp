@@ -10,6 +10,8 @@ class DXGISwapChainLayer : public IDXGISwapChain
     ID3D11Device* m_device;
     ID3D11DeviceContext* m_device_context;
 
+    void* m_swapchain_back_buffer;
+
 public:
 
     DXGISwapChainLayer(IDXGISwapChain* swap);
