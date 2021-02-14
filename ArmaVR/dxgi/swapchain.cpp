@@ -157,10 +157,114 @@ namespace hooks
         }
     };
     armavr::dxgi::addresses::ID3D11DeviceContext1::ClearView ClearView::original = 0;
+
+    struct OMSetRenderTargets : public hooker::hook
+    {
+        ID3D11DeviceContext1* deviceContext;
+        static void* render_target;
+        static armavr::dxgi::addresses::ID3D11DeviceContext1::OMSetRenderTargets original;
+
+        OMSetRenderTargets(ID3D11DeviceContext1* dc) : hooker::hook("OMSetRenderTargets"), deviceContext(dc)
+        {
+            if (armavr::dxgi::addresses::ID3D11DeviceContext1::get_OMSetRenderTargets(deviceContext) != original)
+            {
+                std::cout << "Aquiring hook of ID3D11DeviceContext1::ClearView" << std::endl;
+                original = armavr::dxgi::addresses::ID3D11DeviceContext1::get_OMSetRenderTargets(deviceContext);
+                armavr::dxgi::addresses::ID3D11DeviceContext1::set_OMSetRenderTargets(deviceContext, callback);
+            }
+        }
+        OMSetRenderTargets(ID3D11DeviceContext* dc) : hooker::hook("OMSetRenderTargets"), deviceContext(nullptr)
+        {
+            dc->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)(&deviceContext));
+            if (armavr::dxgi::addresses::ID3D11DeviceContext1::get_OMSetRenderTargets(deviceContext) != original)
+            {
+                std::cout << "Aquiring hook of ID3D11DeviceContext1::OMSetRenderTargets" << std::endl;
+                original = armavr::dxgi::addresses::ID3D11DeviceContext1::get_OMSetRenderTargets(deviceContext);
+                armavr::dxgi::addresses::ID3D11DeviceContext1::set_OMSetRenderTargets(deviceContext, callback);
+            }
+        }
+        virtual ~OMSetRenderTargets()
+        {
+            if (armavr::dxgi::addresses::ID3D11DeviceContext1::get_OMSetRenderTargets(deviceContext) != original)
+            {
+                std::cout << "Releasing hook of ID3D11DeviceContext1::OMSetRenderTargets" << std::endl;
+                armavr::dxgi::addresses::ID3D11DeviceContext1::set_OMSetRenderTargets(deviceContext, original);
+            }
+            deviceContext->Release();
+        }
+        static void STDMETHODCALLTYPE callback(
+            ::ID3D11DeviceContext1* This,
+            UINT                   NumViews,
+            ID3D11RenderTargetView * const *ppRenderTargetViews,
+            ID3D11DepthStencilView *pDepthStencilView)
+        {
+            for (UINT i = 0; i < NumViews; ++i)
+            {
+                if (ppRenderTargetViews[i] == render_target)
+                {
+                    F_PRINT;
+                }
+            }
+
+            original(This, NumViews, ppRenderTargetViews, pDepthStencilView);
+        }
+    };
+    armavr::dxgi::addresses::ID3D11DeviceContext1::OMSetRenderTargets OMSetRenderTargets::original = 0;
+    void* OMSetRenderTargets::render_target = nullptr;
+
+
+    struct CreateRenderTargetView : public hooker::hook
+    {
+        ID3D11Device* device;
+        static void** capture_resource; // resource to capture
+        static armavr::dxgi::addresses::ID3D11Device::CreateRenderTargetView original;
+
+        CreateRenderTargetView(ID3D11Device* dc) : hooker::hook("CreateRenderTargetView"), device(dc)
+        {
+            if (armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device) != original)
+            {
+                std::cout << "Aquiring hook of ID3D11Device::CreateRenderTargetView" << std::endl;
+                original = armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device);
+                armavr::dxgi::addresses::ID3D11Device::set_CreateRenderTargetView(device, callback);
+            }
+        }
+        virtual ~CreateRenderTargetView()
+        {
+            if (armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device) != original)
+            {
+                std::cout << "Releasing hook of ID3D11Device::CreateRenderTargetView" << std::endl;
+                armavr::dxgi::addresses::ID3D11Device::set_CreateRenderTargetView(device, original);
+            }
+            device->Release();
+        }
+        static HRESULT STDMETHODCALLTYPE callback(
+            ::ID3D11Device                      *This,
+            ID3D11Resource                      *pResource,
+            const D3D11_RENDER_TARGET_VIEW_DESC *pDesc,
+            ID3D11RenderTargetView              **ppRTView
+        )
+        {
+            auto result = original(This, pResource, pDesc, ppRTView);
+            if (pResource == *capture_resource)
+            {
+                F_PRINT;
+                std::cout << (void*)*ppRTView << std::endl;
+                OMSetRenderTargets::render_target = *ppRTView;
+            }
+
+            return result;
+        }
+    };
+    armavr::dxgi::addresses::ID3D11Device::CreateRenderTargetView CreateRenderTargetView::original = 0;
+    void** CreateRenderTargetView::capture_resource = nullptr;
 }
 
 
-DXGISwapChainLayer::DXGISwapChainLayer(IDXGISwapChain* swp) : m_swapchain(swp)
+DXGISwapChainLayer::DXGISwapChainLayer(IDXGISwapChain* swp)
+    : m_swapchain(swp)
+    , m_device(nullptr)
+    , m_device_context(nullptr)
+    , m_swapchain_back_buffer(nullptr)
 {
     IDXGIDevice1* dev;
     GetDevice(__uuidof(IDXGIDevice1), (void**)(&dev));
@@ -170,9 +274,13 @@ DXGISwapChainLayer::DXGISwapChainLayer(IDXGISwapChain* swp) : m_swapchain(swp)
     swp->GetDevice(__uuidof(ID3D11Device), (void**)&m_device);
     m_device->GetImmediateContext(&m_device_context);
 
+    hooks::CreateRenderTargetView::capture_resource = &m_swapchain_back_buffer;
+    hooker::register_hook<hooks::CreateRenderTargetView>(m_device);
+
     hooker::register_hook<hooks::ClearRenderTargetView>(m_device_context);
     hooker::register_hook<hooks::ClearDepthStencilView>(m_device_context);
     hooker::register_hook<hooks::ClearView>(m_device_context);
+    hooker::register_hook<hooks::OMSetRenderTargets>(m_device_context);
 }
 
 HRESULT __stdcall DXGISwapChainLayer::QueryInterface(REFIID riid, void** ppvObject)
@@ -229,14 +337,19 @@ HRESULT __stdcall DXGISwapChainLayer::GetDevice(REFIID riid, void** ppDevice)
 
 HRESULT __stdcall DXGISwapChainLayer::Present(UINT SyncInterval, UINT Flags)
 {
-    // F_PRINT;
+    F_PRINT;
     return m_swapchain->Present(0, Flags);
 }
 
 HRESULT __stdcall DXGISwapChainLayer::GetBuffer(UINT Buffer, REFIID riid, void** ppSurface)
 {
     F_PRINT;
-    return m_swapchain->GetBuffer(Buffer, riid, ppSurface);
+    auto result = m_swapchain->GetBuffer(Buffer, riid, ppSurface);
+    if (m_swapchain_back_buffer == nullptr)
+    {
+        m_swapchain_back_buffer = *ppSurface;
+    }
+    return result;
 }
 
 HRESULT __stdcall DXGISwapChainLayer::SetFullscreenState(BOOL Fullscreen, IDXGIOutput* pTarget)
