@@ -257,6 +257,83 @@ namespace hooks
     };
     armavr::dxgi::addresses::ID3D11Device::CreateRenderTargetView CreateRenderTargetView::original = 0;
     void** CreateRenderTargetView::capture_resource = nullptr;
+
+
+    struct VRRenderTargets : public hooker::hook
+    {
+        ID3D11Device* device;
+        static void** capture_resource; // resource to capture
+        static armavr::dxgi::addresses::ID3D11Device::CreateRenderTargetView original;
+
+        VRRenderTargets(ID3D11Device* dc) : hooker::hook("VRRenderTargets"), device(dc)
+        {
+            if (armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device) != original)
+            {
+                std::cout << "Aquiring hook of ID3D11Device::CreateRenderTargetView" << std::endl;
+                original = armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device);
+                armavr::dxgi::addresses::ID3D11Device::set_CreateRenderTargetView(device, callback);
+            }
+        }
+        virtual ~VRRenderTargets()
+        {
+            if (armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device) != original)
+            {
+                std::cout << "Releasing hook of ID3D11Device::CreateRenderTargetView" << std::endl;
+                armavr::dxgi::addresses::ID3D11Device::set_CreateRenderTargetView(device, original);
+            }
+            device->Release();
+        }
+
+        static void create_left_eye_render_target(::ID3D11Device* This)
+        {
+            HRESULT result = {};
+            ID3D11Texture2D* left_eye_texture2d = {};
+            D3D11_TEXTURE2D_DESC left_eye_texture2d_desc = {};
+            left_eye_texture2d_desc.Width = 256;
+            left_eye_texture2d_desc.Height = 256;
+            left_eye_texture2d_desc.MipLevels = 1;
+            left_eye_texture2d_desc.ArraySize = 1;
+            left_eye_texture2d_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            left_eye_texture2d_desc.SampleDesc.Count = 1;
+            left_eye_texture2d_desc.Usage = D3D11_USAGE_DYNAMIC;
+            left_eye_texture2d_desc.BindFlags = D3D10_BIND_RENDER_TARGET;
+            left_eye_texture2d_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            left_eye_texture2d_desc.MiscFlags = 0;
+
+            // Create our own render target for left and right eye
+            if (FAILED(result = This->CreateTexture2D(&left_eye_texture2d_desc, NULL, &left_eye_texture2d)))
+            {
+                std::cout << "Failed to create Texture2D for left-eye (0x" << std::hex << result << ")" << std::endl;
+                return;
+            }
+
+            ID3D11RenderTargetView* left_eye_render_target_view = {};
+            D3D11_RENDER_TARGET_VIEW_DESC left_eye_render_target_view_desc = {};
+            left_eye_render_target_view_desc.ViewDimension = D3D11_RTV_DIMENSION::D3D11_RTV_DIMENSION_TEXTURE2D;
+            left_eye_render_target_view_desc.Format = DXGI_FORMAT::DXGI_FORMAT_R8G8B8A8_UNORM;
+            left_eye_render_target_view_desc.Texture2D.MipSlice = 0;
+
+            if (FAILED(result = original(This, left_eye_texture2d, &left_eye_render_target_view_desc, &left_eye_render_target_view)))
+            {
+                std::cout << "Failed to create RenderTargetView for left-eye (0x" << std::hex << result << ")" << std::endl;
+            }
+        }
+        static HRESULT STDMETHODCALLTYPE callback(
+            ::ID3D11Device                      *This,
+            ID3D11Resource                      *pResource,
+            const D3D11_RENDER_TARGET_VIEW_DESC *pDesc,
+            ID3D11RenderTargetView              **ppRTView
+        )
+        {
+            create_left_eye_render_target(This);
+
+            // Pass creation to original
+            auto result = original(This, pResource, pDesc, ppRTView);
+
+            return result;
+        }
+    };
+    armavr::dxgi::addresses::ID3D11Device::CreateRenderTargetView VRRenderTargets::original = 0;
 }
 
 
@@ -276,6 +353,7 @@ DXGISwapChainLayer::DXGISwapChainLayer(IDXGISwapChain* swp)
 
     hooks::CreateRenderTargetView::capture_resource = &m_swapchain_back_buffer;
     hooker::register_hook<hooks::CreateRenderTargetView>(m_device);
+    hooker::register_hook<hooks::VRRenderTargets>(m_device);
 
     hooker::register_hook<hooks::ClearRenderTargetView>(m_device_context);
     hooker::register_hook<hooks::ClearDepthStencilView>(m_device_context);
