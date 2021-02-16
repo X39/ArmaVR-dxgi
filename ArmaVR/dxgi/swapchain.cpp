@@ -3,12 +3,345 @@
 #include "../hooker.hpp"
 #include "abi.hpp"
 
+
+
 #include <d3d11.h>
 #include <d3d11_1.h>
 #include <iostream>
 
+#include <array>
+#include <csetjmp>
+
+
+// SaveTextureToBmp
+#include <initguid.h>
+#include <windows.h>
+#include <d3d11_3.h>
+#include <d3dcompiler.h>
+#include <directxmath.h>
+#include <wincodec.h>   // WIC
+#include <windows.foundation.h>
+#include <windows.applicationmodel.h>
+#include <windows.ui.xaml.h>
+#include <windows.ui.xaml.markup.h>
+#include <wrl.h>
+#include <numeric>
+#define LAZYERROR(RES,TXT,...) std::cout << (TXT) << std::hex << RES << std::endl; return;
+void SaveTextureToBmp(PCWSTR FileName, ID3D11Texture2D* Texture)
+{
+    using namespace Microsoft::WRL;
+    HRESULT hr;
+
+    // First verify that we can map the texture
+    D3D11_TEXTURE2D_DESC desc;
+    Texture->GetDesc(&desc);
+
+    // translate texture format to WIC format. We support only BGRA and ARGB.
+    GUID wicFormatGuid;
+    switch (desc.Format)
+    {
+        case DXGI_FORMAT_R8G8B8A8_UNORM:
+        wicFormatGuid = GUID_WICPixelFormat32bppRGBA;
+        break;
+        case DXGI_FORMAT_B8G8R8A8_UNORM:
+        wicFormatGuid = GUID_WICPixelFormat32bppBGRA;
+        break;
+        default:
+        LAZYERROR(
+            HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED),
+            L"Unsupported DXGI_FORMAT: %d. Only RGBA and BGRA are supported.",
+            desc.Format);
+    }
+
+    // Get the device context
+    ComPtr<ID3D11Device> d3dDevice;
+    Texture->GetDevice(&d3dDevice);
+    ComPtr<ID3D11DeviceContext> d3dContext;
+    d3dDevice->GetImmediateContext(&d3dContext);
+
+    // map the texture
+    ComPtr<ID3D11Texture2D> mappedTexture;
+    D3D11_MAPPED_SUBRESOURCE mapInfo;
+    mapInfo.RowPitch;
+    hr = d3dContext->Map(
+        Texture,
+        0,  // Subresource
+        D3D11_MAP_READ,
+        0,  // MapFlags
+        &mapInfo);
+
+    if (FAILED(hr))
+    {
+        // If we failed to map the texture, copy it to a staging resource
+        if (hr == E_INVALIDARG)
+        {
+            D3D11_TEXTURE2D_DESC desc2;
+            desc2.Width = desc.Width;
+            desc2.Height = desc.Height;
+            desc2.MipLevels = desc.MipLevels;
+            desc2.ArraySize = desc.ArraySize;
+            desc2.Format = desc.Format;
+            desc2.SampleDesc = desc.SampleDesc;
+            desc2.Usage = D3D11_USAGE_STAGING;
+            desc2.BindFlags = 0;
+            desc2.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            desc2.MiscFlags = 0;
+
+            ComPtr<ID3D11Texture2D> stagingTexture;
+            hr = d3dDevice->CreateTexture2D(&desc2, nullptr, &stagingTexture);
+            if (FAILED(hr))
+            {
+                LAZYERROR(hr, L"Failed to create staging texture");
+            }
+
+            // copy the texture to a staging resource
+            d3dContext->CopyResource(stagingTexture.Get(), Texture);
+
+            // now, map the staging resource
+            hr = d3dContext->Map(
+                stagingTexture.Get(),
+                0,
+                D3D11_MAP_READ,
+                0,
+                &mapInfo);
+            if (FAILED(hr))
+            {
+                LAZYERROR(hr, L"Failed to map staging texture");
+            }
+
+            mappedTexture = std::move(stagingTexture);
+        }
+        else
+        {
+            LAZYERROR(hr, L"Failed to map texture.");
+        }
+    }
+    else
+    {
+        mappedTexture = Texture;
+    }
+    d3dContext->Unmap(mappedTexture.Get(), 0);
+
+    ComPtr<IWICImagingFactory> wicFactory;
+    hr = CoCreateInstance(
+        CLSID_WICImagingFactory,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        __uuidof(wicFactory),
+        reinterpret_cast<void**>(wicFactory.GetAddressOf()));
+    if (FAILED(hr))
+    {
+        LAZYERROR(
+            hr,
+            L"Failed to create instance of WICImagingFactory");
+    }
+
+    ComPtr<IWICBitmapEncoder> wicEncoder;
+    hr = wicFactory->CreateEncoder(
+        GUID_ContainerFormatBmp,
+        nullptr,
+        &wicEncoder);
+    if (FAILED(hr))
+    {
+        LAZYERROR(hr, L"Failed to create BMP encoder");
+    }
+
+    ComPtr<IWICStream> wicStream;
+    hr = wicFactory->CreateStream(&wicStream);
+    if (FAILED(hr))
+    {
+        LAZYERROR(hr, L"Failed to create IWICStream");
+    }
+
+    hr = wicStream->InitializeFromFilename(FileName, GENERIC_WRITE);
+    if (FAILED(hr))
+    {
+        LAZYERROR(hr, L"Failed to initialize stream from file name");
+    }
+
+    hr = wicEncoder->Initialize(wicStream.Get(), WICBitmapEncoderNoCache);
+    if (FAILED(hr))
+    {
+        LAZYERROR(hr, L"Failed to initialize bitmap encoder");
+    }
+
+    // Encode and commit the frame
+    {
+        ComPtr<IWICBitmapFrameEncode> frameEncode;
+        wicEncoder->CreateNewFrame(&frameEncode, nullptr);
+        if (FAILED(hr))
+        {
+            LAZYERROR(hr, L"Failed to create IWICBitmapFrameEncode");
+        }
+
+        hr = frameEncode->Initialize(nullptr);
+        if (FAILED(hr))
+        {
+            LAZYERROR(hr, L"Failed to initialize IWICBitmapFrameEncode");
+        }
+
+
+        hr = frameEncode->SetPixelFormat(&wicFormatGuid);
+        if (FAILED(hr))
+        {
+            LAZYERROR(
+                hr,
+                L"SetPixelFormat(%s) failed.",
+                StringFromWicFormat(wicFormatGuid));
+        }
+
+        hr = frameEncode->SetSize(desc.Width, desc.Height);
+        if (FAILED(hr))
+        {
+            LAZYERROR(hr, L"SetSize(...) failed.");
+        }
+
+        hr = frameEncode->WritePixels(
+            desc.Height,
+            mapInfo.RowPitch,
+            desc.Height * mapInfo.RowPitch,
+            reinterpret_cast<BYTE*>(mapInfo.pData));
+        if (FAILED(hr))
+        {
+            LAZYERROR(hr, L"frameEncode->WritePixels(...) failed.");
+        }
+
+        hr = frameEncode->Commit();
+        if (FAILED(hr))
+        {
+            LAZYERROR(hr, L"Failed to commit frameEncode");
+        }
+    }
+
+    hr = wicEncoder->Commit();
+    if (FAILED(hr))
+    {
+        LAZYERROR(hr, L"Failed to commit encoder");
+    }
+}
+
+
+
+
+
 namespace hooks
 {
+    struct VRRenderTargets : public hooker::hook
+    {
+        ID3D11Device* device;
+        static void** capture_resource; // resource to capture
+        static armavr::dxgi::addresses::ID3D11Device::CreateRenderTargetView original;
+        static ID3D11Texture2D* left_eye_texture;
+        static ID3D11RenderTargetView* left_eye_render_target_view;
+        static ID3D11Texture2D* right_eye_texture;
+        static ID3D11RenderTargetView* right_eye_render_target_view;
+
+        VRRenderTargets(ID3D11Device* dc) : hooker::hook("VRRenderTargets"), device(dc)
+        {
+            if (armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device) != original)
+            {
+                std::cout << "Aquiring hook of ID3D11Device::CreateRenderTargetView" << std::endl;
+                original = armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device);
+                armavr::dxgi::addresses::ID3D11Device::set_CreateRenderTargetView(device, callback);
+            }
+        }
+        virtual ~VRRenderTargets()
+        {
+            if (armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device) != original)
+            {
+                std::cout << "Releasing hook of ID3D11Device::CreateRenderTargetView" << std::endl;
+                armavr::dxgi::addresses::ID3D11Device::set_CreateRenderTargetView(device, original);
+            }
+            device->Release();
+        }
+
+        static void create_left_eye_render_target(::ID3D11Device* This)
+        {
+            HRESULT result = {};
+            D3D11_TEXTURE2D_DESC left_eye_texture2d_desc = {};
+            left_eye_texture2d_desc.Width = 1920;
+            left_eye_texture2d_desc.Height = 1080;
+            left_eye_texture2d_desc.MipLevels = 1;
+            left_eye_texture2d_desc.ArraySize = 1;
+            left_eye_texture2d_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            left_eye_texture2d_desc.SampleDesc.Count = 1;
+            left_eye_texture2d_desc.Usage = D3D11_USAGE::D3D11_USAGE_DEFAULT;
+            left_eye_texture2d_desc.BindFlags = D3D10_BIND_RENDER_TARGET;
+            left_eye_texture2d_desc.CPUAccessFlags = D3D11_CPU_ACCESS_FLAG::D3D11_CPU_ACCESS_WRITE;
+            left_eye_texture2d_desc.MiscFlags = 0;
+
+            // Create our own render target for left and right eye
+            if (FAILED(result = This->CreateTexture2D(&left_eye_texture2d_desc, NULL, &left_eye_texture)))
+            {
+                std::cout << "Failed to create Texture2D for left-eye (0x" << std::hex << result << ")" << std::endl;
+                return;
+            }
+
+            D3D11_RENDER_TARGET_VIEW_DESC left_eye_render_target_view_desc = {};
+            left_eye_render_target_view_desc.ViewDimension = D3D11_RTV_DIMENSION::D3D11_RTV_DIMENSION_TEXTURE2D;
+            left_eye_render_target_view_desc.Format = DXGI_FORMAT::DXGI_FORMAT_R8G8B8A8_UNORM;
+            left_eye_render_target_view_desc.Texture2D.MipSlice = 0;
+
+            if (FAILED(result = original(This, left_eye_texture, &left_eye_render_target_view_desc, &left_eye_render_target_view)))
+            {
+                std::cout << "Failed to create RenderTargetView for left-eye (0x" << std::hex << result << ")" << std::endl;
+            }
+        }
+        static void create_right_eye_render_target(::ID3D11Device* This)
+        {
+            HRESULT result = {};
+            D3D11_TEXTURE2D_DESC right_eye_texture2d_desc = {};
+            right_eye_texture2d_desc.Width = 1920;
+            right_eye_texture2d_desc.Height = 1080;
+            right_eye_texture2d_desc.MipLevels = 1;
+            right_eye_texture2d_desc.ArraySize = 1;
+            right_eye_texture2d_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            right_eye_texture2d_desc.SampleDesc.Count = 1;
+            right_eye_texture2d_desc.Usage = D3D11_USAGE::D3D11_USAGE_DEFAULT;
+            right_eye_texture2d_desc.BindFlags = D3D10_BIND_RENDER_TARGET;
+            right_eye_texture2d_desc.CPUAccessFlags = D3D11_CPU_ACCESS_FLAG::D3D11_CPU_ACCESS_WRITE;
+            right_eye_texture2d_desc.MiscFlags = 0;
+
+            // Create our own render target for right and right eye
+            if (FAILED(result = This->CreateTexture2D(&right_eye_texture2d_desc, NULL, &right_eye_texture)))
+            {
+                std::cout << "Failed to create Texture2D for right-eye (0x" << std::hex << result << ")" << std::endl;
+                return;
+            }
+
+            D3D11_RENDER_TARGET_VIEW_DESC right_eye_render_target_view_desc = {};
+            right_eye_render_target_view_desc.ViewDimension = D3D11_RTV_DIMENSION::D3D11_RTV_DIMENSION_TEXTURE2D;
+            right_eye_render_target_view_desc.Format = DXGI_FORMAT::DXGI_FORMAT_R8G8B8A8_UNORM;
+            right_eye_render_target_view_desc.Texture2D.MipSlice = 0;
+
+            if (FAILED(result = original(This, right_eye_texture, &right_eye_render_target_view_desc, &right_eye_render_target_view)))
+            {
+                std::cout << "Failed to create RenderTargetView for right-eye (0x" << std::hex << result << ")" << std::endl;
+            }
+        }
+        static HRESULT STDMETHODCALLTYPE callback(
+            ::ID3D11Device* This,
+            ID3D11Resource* pResource,
+            const D3D11_RENDER_TARGET_VIEW_DESC* pDesc,
+            ID3D11RenderTargetView** ppRTView
+        )
+        {
+            if (!left_eye_texture) { create_left_eye_render_target(This); }
+            if (!right_eye_texture) { create_right_eye_render_target(This); }
+
+            // Pass creation to original
+            auto result = original(This, pResource, pDesc, ppRTView);
+
+            return result;
+        }
+    };
+    armavr::dxgi::addresses::ID3D11Device::CreateRenderTargetView VRRenderTargets::original = 0;
+    ID3D11Texture2D* VRRenderTargets::left_eye_texture = {};
+    ID3D11RenderTargetView* VRRenderTargets::left_eye_render_target_view = {};
+    ID3D11Texture2D* VRRenderTargets::right_eye_texture = {};
+    ID3D11RenderTargetView* VRRenderTargets::right_eye_render_target_view = {};
+
+
     struct ClearRenderTargetView : public hooker::hook
     {
         ID3D11DeviceContext1* deviceContext;
@@ -163,6 +496,12 @@ namespace hooks
         ID3D11DeviceContext1* deviceContext;
         static void* render_target;
         static armavr::dxgi::addresses::ID3D11DeviceContext1::OMSetRenderTargets original;
+        static int render_state;
+
+        static constexpr int LEFT_EYE = 0;
+        static constexpr int RIGHT_EYE = 1;
+        static constexpr int ORIGINAL = 2;
+        static bool enabled = false;
 
         OMSetRenderTargets(ID3D11DeviceContext1* dc) : hooker::hook("OMSetRenderTargets"), deviceContext(dc)
         {
@@ -198,19 +537,43 @@ namespace hooks
             ID3D11RenderTargetView * const *ppRenderTargetViews,
             ID3D11DepthStencilView *pDepthStencilView)
         {
+            auto hasOriginalRenderTarget = false;
             for (UINT i = 0; i < NumViews; ++i)
             {
                 if (ppRenderTargetViews[i] == render_target)
                 {
-                    F_PRINT;
+                    hasOriginalRenderTarget = true;
                 }
             }
-
-            original(This, NumViews, ppRenderTargetViews, pDepthStencilView);
+            if (hasOriginalRenderTarget || !enabled)
+            {
+                switch (render_state)
+                {
+                    case ORIGINAL:
+                    original(This, NumViews, ppRenderTargetViews, pDepthStencilView);
+                    render_state = LEFT_EYE;
+                    break;
+                    case RIGHT_EYE:
+                    original(This, 1, &VRRenderTargets::right_eye_render_target_view, pDepthStencilView);
+                    render_state = ORIGINAL;
+                    break;
+                    case LEFT_EYE:
+                    default:
+                    original(This, 1, &VRRenderTargets::left_eye_render_target_view, pDepthStencilView);
+                    render_state = RIGHT_EYE;
+                    break;
+                }
+            }
+            else
+            {
+                original(This, NumViews, ppRenderTargetViews, pDepthStencilView);
+            }
         }
     };
     armavr::dxgi::addresses::ID3D11DeviceContext1::OMSetRenderTargets OMSetRenderTargets::original = 0;
     void* OMSetRenderTargets::render_target = nullptr;
+    int OMSetRenderTargets::render_state = OMSetRenderTargets::LEFT_EYE;
+    bool OMSetRenderTargets::enabled = false;
 
 
     struct CreateRenderTargetView : public hooker::hook
@@ -257,83 +620,6 @@ namespace hooks
     };
     armavr::dxgi::addresses::ID3D11Device::CreateRenderTargetView CreateRenderTargetView::original = 0;
     void** CreateRenderTargetView::capture_resource = nullptr;
-
-
-    struct VRRenderTargets : public hooker::hook
-    {
-        ID3D11Device* device;
-        static void** capture_resource; // resource to capture
-        static armavr::dxgi::addresses::ID3D11Device::CreateRenderTargetView original;
-
-        VRRenderTargets(ID3D11Device* dc) : hooker::hook("VRRenderTargets"), device(dc)
-        {
-            if (armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device) != original)
-            {
-                std::cout << "Aquiring hook of ID3D11Device::CreateRenderTargetView" << std::endl;
-                original = armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device);
-                armavr::dxgi::addresses::ID3D11Device::set_CreateRenderTargetView(device, callback);
-            }
-        }
-        virtual ~VRRenderTargets()
-        {
-            if (armavr::dxgi::addresses::ID3D11Device::get_CreateRenderTargetView(device) != original)
-            {
-                std::cout << "Releasing hook of ID3D11Device::CreateRenderTargetView" << std::endl;
-                armavr::dxgi::addresses::ID3D11Device::set_CreateRenderTargetView(device, original);
-            }
-            device->Release();
-        }
-
-        static void create_left_eye_render_target(::ID3D11Device* This)
-        {
-            HRESULT result = {};
-            ID3D11Texture2D* left_eye_texture2d = {};
-            D3D11_TEXTURE2D_DESC left_eye_texture2d_desc = {};
-            left_eye_texture2d_desc.Width = 256;
-            left_eye_texture2d_desc.Height = 256;
-            left_eye_texture2d_desc.MipLevels = 1;
-            left_eye_texture2d_desc.ArraySize = 1;
-            left_eye_texture2d_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-            left_eye_texture2d_desc.SampleDesc.Count = 1;
-            left_eye_texture2d_desc.Usage = D3D11_USAGE_DYNAMIC;
-            left_eye_texture2d_desc.BindFlags = D3D10_BIND_RENDER_TARGET;
-            left_eye_texture2d_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-            left_eye_texture2d_desc.MiscFlags = 0;
-
-            // Create our own render target for left and right eye
-            if (FAILED(result = This->CreateTexture2D(&left_eye_texture2d_desc, NULL, &left_eye_texture2d)))
-            {
-                std::cout << "Failed to create Texture2D for left-eye (0x" << std::hex << result << ")" << std::endl;
-                return;
-            }
-
-            ID3D11RenderTargetView* left_eye_render_target_view = {};
-            D3D11_RENDER_TARGET_VIEW_DESC left_eye_render_target_view_desc = {};
-            left_eye_render_target_view_desc.ViewDimension = D3D11_RTV_DIMENSION::D3D11_RTV_DIMENSION_TEXTURE2D;
-            left_eye_render_target_view_desc.Format = DXGI_FORMAT::DXGI_FORMAT_R8G8B8A8_UNORM;
-            left_eye_render_target_view_desc.Texture2D.MipSlice = 0;
-
-            if (FAILED(result = original(This, left_eye_texture2d, &left_eye_render_target_view_desc, &left_eye_render_target_view)))
-            {
-                std::cout << "Failed to create RenderTargetView for left-eye (0x" << std::hex << result << ")" << std::endl;
-            }
-        }
-        static HRESULT STDMETHODCALLTYPE callback(
-            ::ID3D11Device                      *This,
-            ID3D11Resource                      *pResource,
-            const D3D11_RENDER_TARGET_VIEW_DESC *pDesc,
-            ID3D11RenderTargetView              **ppRTView
-        )
-        {
-            create_left_eye_render_target(This);
-
-            // Pass creation to original
-            auto result = original(This, pResource, pDesc, ppRTView);
-
-            return result;
-        }
-    };
-    armavr::dxgi::addresses::ID3D11Device::CreateRenderTargetView VRRenderTargets::original = 0;
 }
 
 
